@@ -1,0 +1,13 @@
+__pycache__/
+data/
+*.pyc
+*.pyo
+.env
+.vscode/
+.conda/
+.ipynb_checkpoints/
+__pycache__
+*.log
+.DS_Store
+*.sqlite3
+/__pycache__
