@@ -23,8 +23,8 @@ def optimize():
             super().__init__()
             self.generate = dspy.ChainOfThought(GenerateSQL)
             
-        def forward(self, question, schema, constraints):
-            return self.generate(question=question, schema=schema, constraints=constraints)
+        def forward(self, question, db_schema, constraints):
+            return self.generate(question=question, db_schema=db_schema, constraints=constraints)
 
     module = SQLGenerator()
     
