@@ -50,7 +50,7 @@ def main(batch, out):
                 "id": item["id"],
                 "final_answer": final_state.get("final_answer"),
                 "sql": final_state.get("sql_query", ""),
-                "confidence": 0.0, # Placeholder
+                "confidence": 0.0, 
                 "explanation": final_state.get("explanation", ""),
                 "citations": final_state.get("citations", [])
             }
