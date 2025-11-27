@@ -38,8 +38,8 @@ class RetailAgent:
                 def __init__(self):
                     super().__init__()
                     self.generate = dspy.ChainOfThought(GenerateSQL)
-                def forward(self, question, schema, constraints):
-                    return self.generate(question=question, schema=schema, constraints=constraints)
+                def forward(self, question, db_schema, constraints):
+                    return self.generate(question=question, db_schema=db_schema, constraints=constraints)
             
             self.sql_generator_module = SQLGenerator()
             self.sql_generator_module.load(compiled_sql_path)
@@ -120,19 +120,21 @@ class RetailAgent:
         if state.get("error"):
             question += f"\n\nPrevious Error: {state['error']}. Please fix the query."
             
-        pred = self.sql_generator_module(
-            question=question,
-            db_schema=str(self.schema),
-            constraints=state.get("constraints", "")
-        )
-        # Extract SQL from code block if present
-        sql = pred.sql_query
-        if "```sql" in sql:
-            sql = sql.split("```sql")[1].split("```")[0].strip()
-        elif "```" in sql:
-            sql = sql.split("```")[1].split("```")[0].strip()
-            
-        return {"sql_query": sql}
+        try:
+            pred = self.sql_generator_module(
+                question=question,
+                db_schema=str(self.schema),
+                constraints=state.get("constraints", "")
+            )
+            # Extract SQL from code block if present
+            sql = pred.sql_query
+            if "```sql" in sql:
+                sql = sql.split("```sql")[1].split("```")[0].strip()
+            elif "```" in sql:
+                sql = sql.split("```")[1].split("```")[0].strip()
+            return {"sql_query": sql}
+        except Exception as e:
+            return {"sql_query": "", "error": f"SQL Generation Error: {str(e)}"}
 
     def executor_node(self, state: AgentState):
         result = self.sqlite_tool.execute_query(state["sql_query"])
@@ -156,29 +158,55 @@ class RetailAgent:
         # We let the model decide final citations but pass these as context if needed
         # Actually the signature asks for citations as output, so we rely on the model
         
-        pred = self.synthesizer_module(
-            question=state["question"],
-            sql_result=str(state.get("sql_result", {})),
-            retrieved_docs=str(docs),
-            format_hint=state["format_hint"]
-        )
-        
-        # Parse citations from string if needed, or trust DSPy to return list
-        # DSPy OutputField might return string representation of list
-        citations = pred.citations
-        if isinstance(citations, str):
-            # Attempt to parse
-            try:
-                import ast
-                citations = ast.literal_eval(citations)
-            except:
-                citations = [citations]
-                
-        # Ensure citations include doc ids and tables
-        # This is a bit loose, but we'll trust the model for now or refine later
-        
-        return {
-            "final_answer": pred.final_answer,
-            "explanation": pred.explanation,
-            "citations": citations
-        }
+        try:
+            pred = self.synthesizer_module(
+                question=state["question"],
+                sql_result=str(state.get("sql_result", {})),
+                retrieved_docs=str(docs),
+                format_hint=state["format_hint"]
+            )
+            
+            # Parse citations from string if needed, or trust DSPy to return list
+            citations = pred.citations
+            if isinstance(citations, str):
+                try:
+                    import ast
+                    citations = ast.literal_eval(citations)
+                except:
+                    citations = [citations]
+                    
+            return {
+                "final_answer": pred.final_answer,
+                "explanation": pred.explanation,
+                "citations": citations
+            }
+        except Exception as e:
+            # Fallback: try to extract answer from SQL result directly
+            sql_result = state.get("sql_result", {})
+            format_hint = state["format_hint"]
+            final_answer = None
+            
+            if sql_result and sql_result.get("data"):
+                rows = sql_result["data"]
+                if format_hint == "int" and rows:
+                    final_answer = int(rows[0][0]) if rows[0] else None
+                elif format_hint == "float" and rows:
+                    final_answer = round(float(rows[0][0]), 2) if rows[0] else None
+                elif "list" in format_hint and rows:
+                    final_answer = rows  # Return raw rows as list
+                else:
+                    final_answer = rows[0][0] if rows and rows[0] else None
+                    
+            # Extract table citations from SQL
+            sql = state.get("sql_query", "").lower()
+            tables = ["orders", "order_items", "products", "customers", "categories"]
+            table_citations = [t.title() for t in tables if t in sql]
+            
+            # Extract doc citations
+            doc_citations = [f"{d['id']}" for d in docs[:2]]
+            
+            return {
+                "final_answer": final_answer,
+                "explanation": f"Answer extracted from SQL result. Original error: {str(e)[:100]}",
+                "citations": table_citations + doc_citations
+            }
